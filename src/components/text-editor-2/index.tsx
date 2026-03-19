@@ -49,13 +49,11 @@ declare module "@tiptap/core" {
     }
 }
 
-/* ─── Props ─── */
 export interface TextEditor2Props {
     initialContent?: string;
     onChange?: (content: { html: string; json: Record<string, any> }) => void;
 }
 
-/* ─── Toolbar Separator ─── */
 const Sep = () => <div className="w-px h-5 bg-gray-300 mx-1 shrink-0" />;
 
 /* ─── Small icon button ─── */
@@ -125,9 +123,20 @@ export default function TextEditor2({ initialContent = "", onChange }: TextEdito
     const [editMode, setEditMode] = useState<"editing" | "suggesting" | "viewing">("editing");
     const [modeOpen, setModeOpen] = useState(false);
     const modeRef = useRef<HTMLDivElement>(null);
+    const [moreOpen, setMoreOpen] = useState(false);
+    const moreRef = useRef<HTMLDivElement>(null);
+    const [alignSubOpen, setAlignSubOpen] = useState(false);
+    const alignSubRef = useRef<HTMLDivElement>(null);
+    const [showParaMarks, setShowParaMarks] = useState(false);
+    const [, forceUpdate] = useState<number>(0);
+
 
     useEffect(() => {
-        const h = (e: MouseEvent) => { if (modeRef.current && !modeRef.current.contains(e.target as Node)) setModeOpen(false); };
+        const h = (e: MouseEvent) => {
+            if (modeRef.current && !modeRef.current.contains(e.target as Node)) setModeOpen(false);
+            if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
+            if (alignSubRef.current && !alignSubRef.current.contains(e.target as Node)) setAlignSubOpen(false);
+        };
         document.addEventListener("mousedown", h);
         return () => document.removeEventListener("mousedown", h);
     }, []);
@@ -156,8 +165,11 @@ export default function TextEditor2({ initialContent = "", onChange }: TextEdito
             },
         },
         onUpdate: ({ editor }) => {
+            forceUpdate(n => n + 1);
             onChange?.({ html: editor.getHTML(), json: editor.getJSON() });
         },
+        onSelectionUpdate: () => { forceUpdate(n => n + 1); },
+        onTransaction: () => { forceUpdate(n => n + 1); },
     });
 
     const setLink = useCallback(() => {
@@ -200,7 +212,37 @@ export default function TextEditor2({ initialContent = "", onChange }: TextEdito
         if (emoji) editor?.chain().focus().insertContent(emoji).run();
     }, [editor]);
 
-    /* current heading label */
+    /* indent helpers — step margin-left by 40px */
+    const indentIncrease = useCallback(() => {
+        if (!editor) return;
+        const { state } = editor;
+        const { from } = state.selection;
+        const node = state.doc.nodeAt(from);
+        const currentMargin = parseInt((node?.attrs?.style ?? "").match(/margin-left:\s*(\d+)px/)?.[1] ?? "0", 10);
+        const next = Math.min(currentMargin + 40, 320);
+        editor.chain().focus().updateAttributes(state.doc.resolve(from).parent.type.name, {
+            style: `margin-left: ${next}px`,
+        }).run();
+    }, [editor]);
+
+    const indentDecrease = useCallback(() => {
+        if (!editor) return;
+        const { state } = editor;
+        const { from } = state.selection;
+        const node = state.doc.resolve(from).parent;
+        const currentMargin = parseInt((node?.attrs?.style ?? "").match(/margin-left:\s*(\d+)px/)?.[1] ?? "0", 10);
+        const next = Math.max(currentMargin - 40, 0);
+        editor.chain().focus().updateAttributes(node.type.name, {
+            style: next > 0 ? `margin-left: ${next}px` : "",
+        }).run();
+    }, [editor]);
+
+    /* current alignment */
+    const currentAlign =
+        editor?.isActive({ textAlign: 'center' }) ? 'center'
+            : editor?.isActive({ textAlign: 'right' }) ? 'right'
+                : editor?.isActive({ textAlign: 'justify' }) ? 'justify'
+                    : 'left';
     const headingLabel =
         editor?.isActive("heading", { level: 1 }) ? "Heading 1"
             : editor?.isActive("heading", { level: 2 }) ? "Heading 2"
@@ -336,10 +378,7 @@ export default function TextEditor2({ initialContent = "", onChange }: TextEdito
 
                 {/* Bold */}
                 <Btn title="Bold (Ctrl+B)" active={editor?.isActive("bold")} onClick={() => editor?.chain().focus().toggleBold().run()}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z" opacity=".9" />
-                        <path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z" opacity=".9" />
-                    </svg>
+                    <span style={{ fontFamily: "Arial, sans-serif", fontWeight: 800, fontSize: "15px", lineHeight: 1, letterSpacing: "-0.5px" }}>B</span>
                 </Btn>
 
                 {/* Italic */}
@@ -470,11 +509,187 @@ export default function TextEditor2({ initialContent = "", onChange }: TextEdito
                 </Btn>
 
                 {/* More options */}
-                <Btn title="More options">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                        <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
-                    </svg>
-                </Btn>
+                <div ref={moreRef} className="relative shrink-0">
+                    <Btn title="More options" active={moreOpen} onClick={() => setMoreOpen(o => !o)}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                            <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
+                        </svg>
+                    </Btn>
+
+                    {moreOpen && (
+                        <div className="absolute right-0 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-[0_2px_10px_rgba(0,0,0,0.18)] z-50 px-2 py-2 flex items-center gap-0.5 select-none" style={{ whiteSpace: 'nowrap' }}>
+
+                            {/* Alignment group — icon shows current align, chevron opens sub-dropdown */}
+                            <div ref={alignSubRef} className="relative flex items-center shrink-0">
+                                {/* Current align icon */}
+                                <Btn
+                                    title={`Align ${currentAlign}`}
+                                    active={true}
+                                    onClick={() => setAlignSubOpen(o => !o)}
+                                >
+                                    {currentAlign === 'center' ? (
+                                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <line x1="18" y1="10" x2="6" y2="10" /><line x1="21" y1="6" x2="3" y2="6" /><line x1="21" y1="14" x2="3" y2="14" /><line x1="18" y1="18" x2="6" y2="18" />
+                                        </svg>
+                                    ) : currentAlign === 'right' ? (
+                                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <line x1="21" y1="10" x2="7" y2="10" /><line x1="21" y1="6" x2="3" y2="6" /><line x1="21" y1="14" x2="3" y2="14" /><line x1="21" y1="18" x2="9" y2="18" />
+                                        </svg>
+                                    ) : currentAlign === 'justify' ? (
+                                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <line x1="21" y1="10" x2="3" y2="10" /><line x1="21" y1="6" x2="3" y2="6" /><line x1="21" y1="14" x2="3" y2="14" /><line x1="21" y1="18" x2="3" y2="18" />
+                                        </svg>
+                                    ) : (
+                                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <line x1="21" y1="10" x2="3" y2="10" /><line x1="15" y1="6" x2="3" y2="6" /><line x1="17" y1="14" x2="3" y2="14" /><line x1="11" y1="18" x2="3" y2="18" />
+                                        </svg>
+                                    )}
+                                </Btn>
+                                <button
+                                    type="button"
+                                    onClick={() => setAlignSubOpen(o => !o)}
+                                    className="w-3 h-8 flex items-center justify-center text-[#3c4043] hover:bg-gray-200 rounded cursor-default"
+                                    title="More alignments"
+                                >
+                                    <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M1 3l4 4 4-4" /></svg>
+                                </button>
+
+                                {/* Alignment sub-dropdown */}
+                                {alignSubOpen && (
+                                    <div className="absolute left-0 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-md z-[60] px-1 py-1 flex items-center gap-0.5">
+                                        <Btn title="Align left" active={currentAlign === 'left'} onClick={() => { editor?.chain().focus().setTextAlign('left').run(); setAlignSubOpen(false); }}>
+                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <line x1="21" y1="10" x2="3" y2="10" /><line x1="15" y1="6" x2="3" y2="6" /><line x1="17" y1="14" x2="3" y2="14" /><line x1="11" y1="18" x2="3" y2="18" />
+                                            </svg>
+                                        </Btn>
+                                        <Btn title="Align center" active={currentAlign === 'center'} onClick={() => { editor?.chain().focus().setTextAlign('center').run(); setAlignSubOpen(false); }}>
+                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <line x1="18" y1="10" x2="6" y2="10" /><line x1="21" y1="6" x2="3" y2="6" /><line x1="21" y1="14" x2="3" y2="14" /><line x1="18" y1="18" x2="6" y2="18" />
+                                            </svg>
+                                        </Btn>
+                                        <Btn title="Align right" active={currentAlign === 'right'} onClick={() => { editor?.chain().focus().setTextAlign('right').run(); setAlignSubOpen(false); }}>
+                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <line x1="21" y1="10" x2="7" y2="10" /><line x1="21" y1="6" x2="3" y2="6" /><line x1="21" y1="14" x2="3" y2="14" /><line x1="21" y1="18" x2="9" y2="18" />
+                                            </svg>
+                                        </Btn>
+                                        <Btn title="Justify" active={currentAlign === 'justify'} onClick={() => { editor?.chain().focus().setTextAlign('justify').run(); setAlignSubOpen(false); }}>
+                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <line x1="21" y1="10" x2="3" y2="10" /><line x1="21" y1="6" x2="3" y2="6" /><line x1="21" y1="14" x2="3" y2="14" /><line x1="21" y1="18" x2="3" y2="18" />
+                                            </svg>
+                                        </Btn>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Indent decrease */}
+                            <Btn title="Decrease indent" onClick={indentDecrease}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="21" y1="10" x2="7" y2="10" /><line x1="21" y1="6" x2="7" y2="6" /><line x1="21" y1="14" x2="7" y2="14" /><line x1="21" y1="18" x2="7" y2="18" />
+                                    <polyline points="11 8 7 12 11 16" />
+                                </svg>
+                            </Btn>
+
+                            {/* Indent increase */}
+                            <Btn title="Increase indent" onClick={indentIncrease}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="21" y1="10" x2="11" y2="10" /><line x1="21" y1="6" x2="11" y2="6" /><line x1="21" y1="14" x2="11" y2="14" /><line x1="21" y1="18" x2="11" y2="18" />
+                                    <polyline points="7 8 11 12 7 16" />
+                                </svg>
+                            </Btn>
+
+                            <div className="w-px h-5 bg-gray-300 mx-1 shrink-0" />
+
+                            {/* Bullet list */}
+                            <Btn title="Bullet list" active={editor?.isActive('bulletList')} onClick={() => editor?.chain().focus().toggleBulletList().run()}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="9" y1="6" x2="20" y2="6" /><line x1="9" y1="12" x2="20" y2="12" /><line x1="9" y1="18" x2="20" y2="18" />
+                                    <circle cx="4" cy="6" r="1" fill="currentColor" /><circle cx="4" cy="12" r="1" fill="currentColor" /><circle cx="4" cy="18" r="1" fill="currentColor" />
+                                </svg>
+                            </Btn>
+
+                            {/* Numbered list */}
+                            <Btn title="Numbered list" active={editor?.isActive('orderedList')} onClick={() => editor?.chain().focus().toggleOrderedList().run()}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="10" y1="6" x2="21" y2="6" /><line x1="10" y1="12" x2="21" y2="12" /><line x1="10" y1="18" x2="21" y2="18" />
+                                    <path d="M4 6h1v4" /><path d="M4 10h2" /><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1" />
+                                </svg>
+                            </Btn>
+
+                            {/* Blockquote */}
+                            <Btn title="Blockquote" active={editor?.isActive('blockquote')} onClick={() => editor?.chain().focus().toggleBlockquote().run()}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z" />
+                                    <path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z" />
+                                </svg>
+                            </Btn>
+
+                            {/* Horizontal rule */}
+                            <Btn title="Horizontal rule" onClick={() => editor?.chain().focus().setHorizontalRule().run()}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                    <line x1="3" y1="12" x2="21" y2="12" />
+                                </svg>
+                            </Btn>
+
+                            <div className="w-px h-5 bg-gray-300 mx-1 shrink-0" />
+
+                            {/* Paragraph marks toggle */}
+                            <Btn title="Show/hide formatting marks" active={showParaMarks} onClick={() => setShowParaMarks(v => !v)}>
+                                <span className="text-[14px] font-bold leading-none" style={{ fontFamily: 'serif' }}>¶</span>
+                            </Btn>
+
+                            {/* LTR / RTL direction toggle */}
+                            <Btn
+                                title={editor?.isActive({ dir: 'rtl' }) ? "Right-to-left (click for LTR)" : "Left-to-right (click for RTL)"}
+                                active={editor?.isActive({ dir: 'rtl' })}
+                                onClick={() => {
+                                    if (!editor) return;
+                                    const isRtl = editor.isActive({ dir: 'rtl' });
+                                    const { from } = editor.state.selection;
+                                    const nodeName = editor.state.doc.resolve(from).parent.type.name;
+                                    editor.chain().focus().updateAttributes(nodeName, { dir: isRtl ? null : 'rtl' }).run();
+                                }}
+                            >
+                                {editor?.isActive({ dir: 'rtl' }) ? (
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M7 10H21" /><path d="M3 6H21" /><path d="M3 14H21" /><path d="M7 18H21" />
+                                        <polyline points="11 8 7 12 11 16" />
+                                    </svg>
+                                ) : (
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M17 10H3" /><path d="M21 6H3" /><path d="M21 14H3" /><path d="M17 18H3" />
+                                        <polyline points="13 8 17 12 13 16" />
+                                    </svg>
+                                )}
+                            </Btn>
+
+                            <div className="w-px h-5 bg-gray-300 mx-1 shrink-0" />
+
+                            {/* Language / globe */}
+                            <div className="relative flex items-center shrink-0">
+                                <Btn title="Language">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <circle cx="12" cy="12" r="10" />
+                                        <line x1="2" y1="12" x2="22" y2="12" />
+                                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                                    </svg>
+                                </Btn>
+                                <button type="button" className="w-3 h-8 flex items-center justify-center text-[#3c4043] hover:bg-gray-200 rounded cursor-default" title="Language options">
+                                    <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M1 3l4 4 4-4" /></svg>
+                                </button>
+                            </div>
+
+                            <div className="w-px h-5 bg-gray-300 mx-1 shrink-0" />
+
+                            {/* Clear formatting */}
+                            <Btn title="Clear formatting" onClick={() => editor?.chain().focus().clearNodes().unsetAllMarks().run()}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M17 3H7L3 13l4 4 7-11h3z" /><line x1="3" y1="21" x2="21" y2="21" /><line x1="18" y1="6" x2="6" y2="18" />
+                                </svg>
+                            </Btn>
+
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* ─── Document Canvas ─── */}
@@ -488,9 +703,9 @@ export default function TextEditor2({ initialContent = "", onChange }: TextEdito
                     <div
                         className="bg-white shadow-[0_1px_4px_rgba(0,0,0,0.25)] w-full"
                         style={{
-                            maxWidth: "816px",        /* US Letter at 96 dpi */
-                            minHeight: "1056px",      /* US Letter height */
-                            padding: "72px 96px",     /* 0.75in top/bottom, 1in sides */
+                            maxWidth: "1056px",        /* US Letter at 96 dpi */
+                            minHeight: "816px",      /* US Letter height */
+                            padding: "36px 48px",     /* 0.75in top/bottom, 1in sides */
                             boxSizing: "border-box",
                         }}
                     >
